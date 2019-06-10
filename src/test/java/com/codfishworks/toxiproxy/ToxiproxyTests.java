@@ -15,9 +15,11 @@ import org.testcontainers.containers.ToxiproxyContainer;
 import com.lambdaworks.redis.RedisClient;
 import com.lambdaworks.redis.RedisCommandTimeoutException;
 import com.lambdaworks.redis.api.sync.RedisCommands;
+import eu.rekawek.toxiproxy.model.ToxicDirection;
 
 public class ToxiproxyTests {
 
+    // Use a shared network so that containers can talk with each other
     private static Network network = Network.newNetwork();
 
     private static GenericContainer redis = new GenericContainer("redis:5.0.4")
@@ -58,16 +60,20 @@ public class ToxiproxyTests {
     }
 
     @Test
-    public void toxiproxyCanMessUpCallsToRedis() {
+    public void toxiproxyCanMessUpCallsToRedis() throws Exception {
         ToxiproxyContainer.ContainerProxy proxy = toxiproxy.getProxy(redis, 6379);
-        proxy.setConnectionCut(true);
 
         RedisClient client = RedisClient.create("redis://" + proxy.getContainerIpAddress() + ":" + proxy.getProxyPort());
         client.setDefaultTimeout(500, TimeUnit.MILLISECONDS);
 
+        RedisCommands<String, String> connect = client.connect().sync();
+        connect.set("key", "value");
+
+        // Let's add an artificial delay and see what happens...
+        proxy.toxics().latency("extra_latency", ToxicDirection.UPSTREAM, 1000);
+
         Assertions.assertThrows(RedisCommandTimeoutException.class, () -> {
-            RedisCommands<String, String> connect = client.connect().sync();
-            connect.set("key", "value");
+            connect.get("key");
         });
     }
 
